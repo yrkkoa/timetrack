@@ -2,7 +2,7 @@ import datetime
 import sqlite3
 
 
-def register_deprecated_adapters_and_converters():
+def register_sqlite_adapters():
     """
     These are the builtin adapters/converters for sqlite that were deprecated in pyton 3.12
     Just resurrected undeprecated as we depend on that exact implementation

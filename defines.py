@@ -1,11 +1,10 @@
-ACT_ARRIVE = 'arrive'
-ACT_BREAK = 'break'
-ACT_RESUME = 'resume'
-ACT_LEAVE = 'leave'
-ACT_SICK = 'sick'
-ACT_VACATION = 'vac'
-ACT_FZA = 'fza'
-
+ACT_ARRIVE = "arrive"
+ACT_BREAK = "break"
+ACT_RESUME = "resume"
+ACT_LEAVE = "leave"
+ACT_SICK = "sick"
+ACT_VACATION = "vac"
+ACT_FZA = "fza"
 
 
 MSG_ERR_NOT_WORKING = 1 << 0
@@ -21,4 +20,3 @@ WEEK_HOURS = 35
 DAY_HOURS = WEEK_HOURS / 5.0
 
 CONFIG_FILE = "~/.config/timetrack.conf"
-

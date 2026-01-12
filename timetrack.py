@@ -6,7 +6,6 @@ from defines import *
 from randommessage import *
 
 from datetime import datetime, date, time, timedelta
-from dateutil.relativedelta import *
 
 import argparse
 import os
@@ -31,6 +30,7 @@ sqlite.register_sqlite_adapters()
 # monthly reporting as decimal hours we round as expected
 decimal.getcontext().rounding = decimal.ROUND_HALF_UP
 
+
 def valid_cli_date(s):
     try:
         return datetime.strptime(s, "%Y-%m-%d")
@@ -38,11 +38,13 @@ def valid_cli_date(s):
         msg = "not a valid date: {0!r}".format(s)
         raise argparse.ArgumentTypeError(msg)
 
+
 class ProgramAbortError(Exception):
     """
     Exception class that wraps a critical error and encapsules it for
     pretty-printing of the error message.
     """
+
     def __init__(self, message, cause):
         self.message = message
         self.cause = cause
@@ -74,20 +76,23 @@ def error(msg, ex):
     """
     raise ProgramAbortError(msg, ex)
 
+
 def dbSetup():
     """
     Create a new SQLite database in the user's home, creating and initializing
     the database if it doesn't exist. Returns an sqlite3 connection object.
     """
-    con = sqlite3.connect(os.path.expanduser(cfg['db']['file']),
-                          detect_types=sqlite3.PARSE_DECLTYPES)
+    con = sqlite3.connect(
+        os.path.expanduser(cfg["db"]["file"]), detect_types=sqlite3.PARSE_DECLTYPES
+    )
     con.row_factory = sqlite3.Row
 
-    dbVersion = con.execute("PRAGMA user_version").fetchone()['user_version']
+    dbVersion = con.execute("PRAGMA user_version").fetchone()["user_version"]
     if dbVersion == 0:
         # database is uninitialized, create the tables we need
         con.execute("BEGIN EXCLUSIVE")
-        con.execute("""
+        con.execute(
+            """
                 CREATE TABLE times (
                       type TEXT NOT NULL CHECK (
                            type == "{}"
@@ -100,8 +105,16 @@ def dbSetup():
                     , ts TIMESTAMP NOT NULL
                     , PRIMARY KEY (type, ts)
                 )
-            """.format(ACT_ARRIVE, ACT_BREAK, ACT_RESUME, ACT_LEAVE, ACT_SICK,
-                ACT_VACATION, ACT_FZA))
+            """.format(
+                ACT_ARRIVE,
+                ACT_BREAK,
+                ACT_RESUME,
+                ACT_LEAVE,
+                ACT_SICK,
+                ACT_VACATION,
+                ACT_FZA,
+            )
+        )
         con.execute("PRAGMA user_version = 1")
         con.commit()
     # database upgrade code would go here
@@ -116,14 +129,16 @@ def addEntry(con, type, ts):
 
 def getLastType(con, date=None):
     if date:
-        cur = con.execute("SELECT type FROM times WHERE date(ts) = date('{}')"
-        "ORDER BY ts DESC LIMIT 1".format(date))
+        cur = con.execute(
+            "SELECT type FROM times WHERE date(ts) = date('{}')"
+            "ORDER BY ts DESC LIMIT 1".format(date)
+        )
     else:
         cur = con.execute("SELECT type FROM times ORDER BY ts DESC LIMIT 1")
     row = cur.fetchone()
     if row is None:
         return None
-    return row['type']
+    return row["type"]
 
 
 def getLastTime(con):
@@ -131,11 +146,15 @@ def getLastTime(con):
     row = cur.fetchone()
     if row is None:
         return None
-    return row['ts']
+    return row["ts"]
+
 
 def revertLeave(con, date):
-    con.execute("UPDATE times SET type = '{}' WHERE date(ts) = date('{}')"
-    "AND type = '{}'".format(ACT_BREAK, date, ACT_LEAVE))
+    con.execute(
+        "UPDATE times SET type = '{}' WHERE date(ts) = date('{}')"
+        "AND type = '{}'".format(ACT_BREAK, date, ACT_LEAVE)
+    )
+
 
 def startTracking(con):
     """
@@ -149,14 +168,15 @@ def startTracking(con):
         error(randomMessage(MSG_ERR_HAVE_NOT_LEFT), None)
 
     if lastType == ACT_LEAVE:
-        should = input("You already left for today - do you really want to"
-                "return? [y/N] ")
-        if should == 'y':
+        should = input(
+            "You already left for today - do you really want toreturn? [y/N] "
+        )
+        if should == "y":
             # resumed work on same day after leave
             revertLeave(con, date.today())
             isResume = True
         else:
-            raise ProgramAbortError('Aborted by user')
+            raise ProgramAbortError("Aborted by user")
 
     arrivalTime = datetime.now()
     addEntry(con, ACT_RESUME if isResume else ACT_ARRIVE, arrivalTime)
@@ -216,6 +236,7 @@ def endTracking(con):
     message(randomMessage(MSG_SUCCESS_LEAVE, leaveTime))
     dayStatistics(con)
 
+
 def addSpecialEntries(con, type, start, end):
     delta = (end - start).days
 
@@ -228,55 +249,75 @@ def addSpecialEntries(con, type, start, end):
         else:
             print("-- skipping {}".format(day))
 
-    should = input("Do you really want to add those {} days? [y/N] "
-            .format(len(days)))
-    if should == 'y':
+    should = input("Do you really want to add those {} days? [y/N] ".format(len(days)))
+    if should == "y":
         for d in days:
             print("adding {}".format(d))
             addEntry(con, type, d)
 
+
 def addVacation(con, start, end):
     addSpecialEntries(con, ACT_VACATION, start, end)
+
 
 def addFza(con, start, end):
     addSpecialEntries(con, ACT_FZA, start, end)
 
+
 def addSick(con, start, end):
     addSpecialEntries(con, ACT_SICK, start, end)
 
+
 def getEntries(con, d):
     # Get the arrival for the date
-    cur = con.execute("SELECT ts FROM times WHERE type = ? AND ts >= ? AND ts "
-                      "< ? ORDER BY ts ASC LIMIT 1",
-                      (ACT_ARRIVE, datetime.combine(d, time()),
-                       datetime.combine(d + timedelta(days=1), time())))
+    cur = con.execute(
+        "SELECT ts FROM times WHERE type = ? AND ts >= ? AND ts "
+        "< ? ORDER BY ts ASC LIMIT 1",
+        (
+            ACT_ARRIVE,
+            datetime.combine(d, time()),
+            datetime.combine(d + timedelta(days=1), time()),
+        ),
+    )
     res = cur.fetchone()
     if not res:
         # without arrival we expect vacation/sick
-        cur = con.execute("SELECT type, ts FROM times WHERE type IN (?,?,?) "
-                        "AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT 1",
-                      (ACT_SICK, ACT_VACATION, ACT_FZA, datetime.combine(d, time()),
-                       datetime.combine(d + timedelta(days=1), time())))
+        cur = con.execute(
+            "SELECT type, ts FROM times WHERE type IN (?,?,?) "
+            "AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT 1",
+            (
+                ACT_SICK,
+                ACT_VACATION,
+                ACT_FZA,
+                datetime.combine(d, time()),
+                datetime.combine(d + timedelta(days=1), time()),
+            ),
+        )
         res = cur.fetchone()
         if not res:
             # nothing on this day
             return []
-        return [(res['type'], res['ts'])]
+        return [(res["type"], res["ts"])]
 
     # normal day here
-    startTime = res['ts']
+    startTime = res["ts"]
 
     # Use the end of the day as endtime
     endTime = datetime.combine(d + timedelta(days=1), time())
 
     # Get all entries between the start time, and the end time (if applicable)
-    cur = con.execute("SELECT type, ts FROM times WHERE ts >= ? AND ts < "
-                      "? ORDER BY ts ASC", (startTime, endTime))
+    cur = con.execute(
+        "SELECT type, ts FROM times WHERE ts >= ? AND ts < ? ORDER BY ts ASC",
+        (startTime, endTime),
+    )
     return cur
 
+
 def timeAsHourMinute(time):
-    seconds = time.total_seconds() if time.total_seconds() > 0 else -time.total_seconds()
-    return  ( int(seconds // (60 * 60)), int((seconds % 3600) // 60) )
+    seconds = (
+        time.total_seconds() if time.total_seconds() > 0 else -time.total_seconds()
+    )
+    return (int(seconds // (60 * 60)), int((seconds % 3600) // 60))
 
 
 class WorkDay:
@@ -322,7 +363,7 @@ class WorkDay:
             pausetime += p.duration()
 
         endtime = datetime.now() if self.is_unfinished_today() else self.end
-        total = (endtime - self.start - pausetime)
+        total = endtime - self.start - pausetime
 
         # compensate overtime
         if self.type == WorkDay.Type.FZA:
@@ -341,31 +382,38 @@ class WorkDay:
         pauseString = ""
         for i in range(len(self.pauses)):
             p = self.pauses[i]
-            pauseString += "{}-{}".format(p.start.strftime('%H:%M'),
-                    p.end.strftime('%H:%M'))
+            pauseString += "{}-{}".format(
+                p.start.strftime("%H:%M"), p.end.strftime("%H:%M")
+            )
             if i != len(self.pauses) - 1:
                 pauseString += ","
         # hours as hours:minutes
         if not as_hours:
-            return "{}   {:2d}:{:02d}   {}".format(self.day().strftime('%a %Y-%m-%d'),
-                h, m, pauseString)
+            return "{}   {:2d}:{:02d}   {}".format(
+                self.day().strftime("%a %Y-%m-%d"), h, m, pauseString
+            )
         else:
-            return "{}   {:5}   {}".format(self.day().strftime('%a %Y-%m-%d'),
-                    round(Decimal(self.worktime().total_seconds()) / 3600, 1) , pauseString)
-
+            return "{}   {:5}   {}".format(
+                self.day().strftime("%a %Y-%m-%d"),
+                round(Decimal(self.worktime().total_seconds()) / 3600, 1),
+                pauseString,
+            )
 
     def __str__(self):
         h, m = timeAsHourMinute(self.worktime())
         pauseString = ""
         for i in range(len(self.pauses)):
             p = self.pauses[i]
-            pauseString += "{}-{}".format(p.start.strftime('%H:%M'),
-                    p.end.strftime('%H:%M'))
+            pauseString += "{}-{}".format(
+                p.start.strftime("%H:%M"), p.end.strftime("%H:%M")
+            )
             if i != len(self.pauses) - 1:
                 pauseString += ","
 
-        return "{}   {:2d}:{:02d}   {}".format(self.day().strftime('%a %Y-%m-%d'),
-            h, m, pauseString)
+        return "{}   {:2d}:{:02d}   {}".format(
+            self.day().strftime("%a %Y-%m-%d"), h, m, pauseString
+        )
+
 
 class WorkMonth:
     def __init__(self, date):
@@ -378,21 +426,25 @@ class WorkMonth:
     def __str__(self):
         dH, dM = timeAsHourMinute(self.delta())
         return "{} ({:2d} days): {:>6}{:3d} h {:02d} min".format(
-                self.date.strftime("%Y-%m"),
-                len(self.workdays),
-                "+" if self.delta().total_seconds() > 0 else "-",
-                abs(dH), dM)
+            self.date.strftime("%Y-%m"),
+            len(self.workdays),
+            "+" if self.delta().total_seconds() > 0 else "-",
+            abs(dH),
+            dM,
+        )
 
     def delta(self):
         return self.actualTime - self.expectedTime
 
     def deltaString(self):
         dH, dM = timeAsHourMinute(self.delta())
-        return "{} {:>2d} h {:02d} min".format("+" if self.delta().total_seconds() > 0
-                else "-", dH, dM)
+        return "{} {:>2d} h {:02d} min".format(
+            "+" if self.delta().total_seconds() > 0 else "-", dH, dM
+        )
 
     def addDay(self, day):
         self.workdays.append(day)
+
 
 class WorkYear:
     def __init__(self, year):
@@ -406,10 +458,12 @@ class WorkYear:
         self.months.append(month)
 
     def totalExpected(self):
-        return reduce(lambda x,y: x + y.expectedTime, self.months, timedelta(seconds=0))
+        return reduce(
+            lambda x, y: x + y.expectedTime, self.months, timedelta(seconds=0)
+        )
 
     def totalActual(self):
-        return reduce(lambda x,y: x + y.actualTime, self.months, timedelta(seconds=0))
+        return reduce(lambda x, y: x + y.actualTime, self.months, timedelta(seconds=0))
 
     def firstMonth(self):
         return self.months[0].date.month
@@ -422,10 +476,14 @@ class WorkYear:
 
     def __str__(self):
         dH, dM = timeAsHourMinute(self.delta())
-        return "{} ({:3d} days): {:>8}{:3d} h {:02d} min".format(self.year,
-                reduce(lambda x,y: x + len(y.workdays), self.months, 0),
-                "+" if self.delta().total_seconds() > 0 else "-",
-                abs(dH), dM)
+        return "{} ({:3d} days): {:>8}{:3d} h {:02d} min".format(
+            self.year,
+            reduce(lambda x, y: x + len(y.workdays), self.months, 0),
+            "+" if self.delta().total_seconds() > 0 else "-",
+            abs(dH),
+            dM,
+        )
+
 
 def getWorkTimeForDay(con, d=date.today()):
     summaryTime = timedelta(0)
@@ -450,7 +508,7 @@ def getWorkTimeForDay(con, d=date.today()):
             day.start = ts
         elif type == ACT_LEAVE:
             day.end = ts
-            day.finished = True;
+            day.finished = True
         elif type == ACT_BREAK:
             if pause:
                 error("Break while pause active at {}".format(ts), None)
@@ -467,7 +525,6 @@ def getWorkTimeForDay(con, d=date.today()):
         else:
             error("Unhandled type for {}".format(type, ts), None)
 
-
     if day.start and not day.end:
         day.end = datetime.now()
 
@@ -483,13 +540,19 @@ def getWorkTimeForDay_old(con, d=date.today()):
                 return (False, summaryTime + timedelta(hours=DAY_HOURS))
 
             if type not in [ACT_ARRIVE, ACT_RESUME]:
-                error("Expected arrival while computing presence time, got {}"
-                      " at {}".format(type, ts), None)
+                error(
+                    "Expected arrival while computing presence time, got {}"
+                    " at {}".format(type, ts),
+                    None,
+                )
             arrival = ts
         else:
             if type not in [ACT_BREAK, ACT_LEAVE]:
-                error("Expected break/leave while computing presence time, got"
-                      " {} at {}".format(type, ts), None)
+                error(
+                    "Expected break/leave while computing presence time, got"
+                    " {} at {}".format(type, ts),
+                    None,
+                )
             summaryTime += ts - arrival
             arrival = None
     if arrival:
@@ -511,26 +574,32 @@ def dayStatistics(con, offset=0):
     currentlyHere, totalTime = getWorkTimeForDay_old(con)
     if currentlyHere:
         message("You are currently at work.")
-    message("You have worked {} h {} min".format(
-        int(totalTime.total_seconds() // (60 * 60)),
-        int((totalTime.total_seconds() % 3600) // 60)))
+    message(
+        "You have worked {} h {} min".format(
+            int(totalTime.total_seconds() // (60 * 60)),
+            int((totalTime.total_seconds() % 3600) // 60),
+        )
+    )
+
 
 def monthStats(con, month, year):
     today = date(year, month, 1)
     m = WorkMonth(today)
 
-    if (date(m.date.year, m.date.month, 1) < date(THE_START.year,
-        THE_START.month, 1)):
+    if date(m.date.year, m.date.month, 1) < date(THE_START.year, THE_START.month, 1):
         error("Month {} before {}".format(m.date, THE_START), None)
 
     firstDay = date(m.date.year, m.date.month, 1)
-    lastDay = date(m.date.year, m.date.month, calendar.monthrange(m.date.year, m.date.month)[1])
+    lastDay = date(
+        m.date.year, m.date.month, calendar.monthrange(m.date.year, m.date.month)[1]
+    )
 
-    if (firstDay < THE_START):
+    if firstDay < THE_START:
         firstDay = THE_START
 
-    workingDays = holiday_calendar.get_working_days_delta(firstDay, lastDay,
-            include_start=True)
+    workingDays = holiday_calendar.get_working_days_delta(
+        firstDay, lastDay, include_start=True
+    )
     dailyHours = timedelta(hours=DAY_HOURS)
 
     m.expectedTime = dailyHours * workingDays
@@ -552,10 +621,13 @@ def monthStats(con, month, year):
 
     return m
 
+
 def printMonthStats(con, month, year, with_total=False, with_ytd=False, as_hours=False):
     m = monthStats(con, month, year)
 
-    lastDay = date(m.date.year, m.date.month, calendar.monthrange(m.date.year, m.date.month)[1])
+    lastDay = date(
+        m.date.year, m.date.month, calendar.monthrange(m.date.year, m.date.month)[1]
+    )
 
     print("Work time for {}:\n".format(m.date.strftime("%B '%y")))
     print("     Day         Hours   Pauses / Comment")
@@ -592,12 +664,17 @@ def printMonthStats(con, month, year, with_total=False, with_ytd=False, as_hours
     actualHours, actualMinutes = timeAsHourMinute(m.actualTime)
 
     print("-" * 40)
-    print("Working hours expected: {:>3d} h {:02d} min".format(
-        expectedHours, expectedMinutes))
-    print("Actual hours:           {:>3d} h {:02d} min".format(actualHours, actualMinutes))
+    print(
+        "Working hours expected: {:>3d} h {:02d} min".format(
+            expectedHours, expectedMinutes
+        )
+    )
+    print(
+        "Actual hours:           {:>3d} h {:02d} min".format(actualHours, actualMinutes)
+    )
     print("Delta hours:           {:>13}".format(m.deltaString()))
 
-    #print("Delta mins {}".format(int(m.delta().total_seconds() / 60)))
+    # print("Delta mins {}".format(int(m.delta().total_seconds() / 60)))
 
     if with_ytd:
         print()
@@ -609,8 +686,9 @@ def printMonthStats(con, month, year, with_total=False, with_ytd=False, as_hours
         print()
         printTotalStats(con, year, month)
 
+
 def yearlyStats(con, year, toMonth=12, fromMonth=1):
-    if (toMonth < fromMonth):
+    if toMonth < fromMonth:
         toMonth = fromMonth
 
     y = date(year, toMonth, 1)
@@ -624,11 +702,15 @@ def yearlyStats(con, year, toMonth=12, fromMonth=1):
 
     return workYear
 
+
 def printYearlyStats(con, year, toMonth=12, fromMonth=1):
     wy = yearlyStats(con, year, toMonth, fromMonth)
 
-    print("Yearly summary for {} {:02d}-{:02d}:\n".format(wy.year,
-        wy.firstMonth(), wy.lastMonth()))
+    print(
+        "Yearly summary for {} {:02d}-{:02d}:\n".format(
+            wy.year, wy.firstMonth(), wy.lastMonth()
+        )
+    )
 
     for m in wy.months:
         print("{}".format(m))
@@ -645,8 +727,12 @@ def printYearlyStats(con, year, toMonth=12, fromMonth=1):
 
     tdH, tdM = timeAsHourMinute(totalDiff)
     tdD = round(totalDiff.total_seconds() / (60 * 60 * DAY_HOURS), ndigits=2)
-    print("total diff:    {:>10}{:>3d} h {:02d} min (workdays: {})".format(
-        ("+" if totalDiff.total_seconds() > 0 else "-"),  tdH, tdM, tdD))
+    print(
+        "total diff:    {:>10}{:>3d} h {:02d} min (workdays: {})".format(
+            ("+" if totalDiff.total_seconds() > 0 else "-"), tdH, tdM, tdD
+        )
+    )
+
 
 def printTotalStats(con, year, toMonth=12):
     years = []
@@ -662,7 +748,6 @@ def printTotalStats(con, year, toMonth=12):
         totalActual += ys.totalActual()
         print("{}".format(ys))
 
-
     totalDiff = totalActual - totalExpected
 
     tEH, tEM = timeAsHourMinute(totalExpected)
@@ -671,18 +756,18 @@ def printTotalStats(con, year, toMonth=12):
 
     tdH, tdM = timeAsHourMinute(totalDiff)
     tdD = round(totalDiff.total_seconds() / (60 * 60 * DAY_HOURS), ndigits=2)
-    print("total diff:    {:>10}{:>3d} h {:02d} min (workdays: {})".format(
-        ("+" if totalDiff.total_seconds() > 0 else "-"),  tdH, tdM, tdD))
+    print(
+        "total diff:    {:>10}{:>3d} h {:02d} min (workdays: {})".format(
+            ("+" if totalDiff.total_seconds() > 0 else "-"), tdH, tdM, tdD
+        )
+    )
 
 
 def weekStatistics(con, offset=0):
     today = date.today()
-    startOfWeek = (today - timedelta(days=today.weekday()) +
-                   timedelta(weeks=offset))
-    endOfWeek = min(today + timedelta(days=1),
-                    startOfWeek + timedelta(weeks=1))
-    message("Statistics for week {:>02d}:".format(
-        startOfWeek.isocalendar()[1]))
+    startOfWeek = today - timedelta(days=today.weekday()) + timedelta(weeks=offset)
+    endOfWeek = min(today + timedelta(days=1), startOfWeek + timedelta(weeks=1))
+    message("Statistics for week {:>02d}:".format(startOfWeek.isocalendar()[1]))
 
     current = startOfWeek
     dailyHours = timedelta(hours=DAY_HOURS)
@@ -710,8 +795,11 @@ def weekStatistics(con, offset=0):
                 headerPrinted = True
                 message("   date         hours         diff ")
                 message("  ----------   -----------   ------")
-            message("  {:%d.%m.%Y}   {:>2d} h {:>02d} min    {: =+1.2f}"
-                    .format(current, totalHours, totalMinutes, timedeltaHours))
+            message(
+                "  {:%d.%m.%Y}   {:>2d} h {:>02d} min    {: =+1.2f}".format(
+                    current, totalHours, totalMinutes, timedeltaHours
+                )
+            )
         except ProgramAbortError as pae:
             if current.weekday() < 5:
                 # For non-weekend days, print a message
@@ -734,11 +822,19 @@ def weekStatistics(con, offset=0):
         expectation = dailyHours * daysSoFar
         expectationHours = int(expectation.total_seconds() // (60 * 60))
         expectationMinutes = int((expectation.total_seconds() % 3600) // 60)
-        message("   Expected:   {:>2d} h {:>02d} min"
-                .format(expectationHours, expectationMinutes))
-    message("    Week {:>02d}:   {:>2d} h {:>02d} min    {: =+2.2f}"
-            .format(startOfWeek.isocalendar()[1], weekTotalHours,
-                    weekTotalMinutes, weekExtraHours))
+        message(
+            "   Expected:   {:>2d} h {:>02d} min".format(
+                expectationHours, expectationMinutes
+            )
+        )
+    message(
+        "    Week {:>02d}:   {:>2d} h {:>02d} min    {: =+2.2f}".format(
+            startOfWeek.isocalendar()[1],
+            weekTotalHours,
+            weekTotalMinutes,
+            weekExtraHours,
+        )
+    )
     if daysSoFar < 5 or (daysSoFar == 5 and currentlyHere):
         # Calculate avg. remaining work time per day
         totalExpectation = timedelta(hours=WEEK_HOURS)
@@ -746,32 +842,40 @@ def weekStatistics(con, offset=0):
         remainingHours = int(remaining.total_seconds() // (60 * 60))
         remainingMinutes = int((remaining.total_seconds() % 3600) // 60)
         message("  ----------   -----------   ------")
-        message("  Remaining:   {:>2d} h {:>02d} min"
-                .format(remainingHours, remainingMinutes))
+        message(
+            "  Remaining:   {:>2d} h {:>02d} min".format(
+                remainingHours, remainingMinutes
+            )
+        )
         if daysSoFar < 4:
             # Remaining per day
             remainingPerDay = remaining / (5 - daysSoFar)
-            remainingPerDayHours = int(
-                remainingPerDay.total_seconds() // (60 * 60))
-            remainingPerDayMinutes = int(
-                (remainingPerDay.total_seconds() % 3600) // 60)
-            message("      Daily:   {:>2d} h {:>02d} min"
-                    .format(remainingPerDayHours, remainingPerDayMinutes))
+            remainingPerDayHours = int(remainingPerDay.total_seconds() // (60 * 60))
+            remainingPerDayMinutes = int((remainingPerDay.total_seconds() % 3600) // 60)
+            message(
+                "      Daily:   {:>2d} h {:>02d} min".format(
+                    remainingPerDayHours, remainingPerDayMinutes
+                )
+            )
+
 
 def time_mod(time, delta, epoch=None):
     if epoch is None:
         epoch = datetime(1970, 1, 1, tzinfo=time.tzinfo)
     return (time - epoch) % delta
 
+
 def time_round(time, delta, epoch=None):
     mod = time_mod(time, delta, epoch)
     if mod < delta / 2:
-       return time - mod
+        return time - mod
     return time + (delta - mod)
+
 
 def time_floor(time, delta, epoch=None):
     mod = time_mod(time, delta, epoch)
     return time - mod
+
 
 def time_ceil(time, delta, epoch=None):
     mod = time_mod(time, delta, epoch)
@@ -781,120 +885,180 @@ def time_ceil(time, delta, epoch=None):
 
 
 def validateConfig(config):
-    config['db']['file'] = os.path.expanduser(config['db']['file'])
-    if not (os.path.exists(config['db']['file']) or os.access(os.path.dirname(config['db']['file']), os.W_OK)):
+    config["db"]["file"] = os.path.expanduser(config["db"]["file"])
+    if not (
+        os.path.exists(config["db"]["file"])
+        or os.access(os.path.dirname(config["db"]["file"]), os.W_OK)
+    ):
         error("invalid db file or path not writeable", None)
+
 
 def main():
     try:
         cfgfile = os.path.expanduser(CONFIG_FILE)
         cfg.read(cfgfile)
     except:
-        print("Please create a " + CONFIG_FILE + " with entry: \n[db]\nfile = /path/to/database.db")
+        print(
+            "Please create a "
+            + CONFIG_FILE
+            + " with entry: \n[db]\nfile = /path/to/database.db"
+        )
         sys.exit(1)
 
     validateConfig(cfg)
 
-    parser = argparse.ArgumentParser(description='Track your work time')
+    parser = argparse.ArgumentParser(description="Track your work time")
 
-    commands = parser.add_subparsers(title='subcommands', dest='action',
-                                    help='description', metavar='action')
-    parser_morning = commands.add_parser('morning',
-                                        help='Start a new day')
-    commands.add_parser('start', help='Start a new day')
+    commands = parser.add_subparsers(
+        title="subcommands", dest="action", help="description", metavar="action"
+    )
+    parser_morning = commands.add_parser("morning", help="Start a new day")
+    commands.add_parser("start", help="Start a new day")
 
-    parser_break = commands.add_parser('break',
-                                    help='Take a break from working')
-    commands.add_parser('pause', help='Alias to break')
+    parser_break = commands.add_parser("break", help="Take a break from working")
+    commands.add_parser("pause", help="Alias to break")
 
-    parser_resume = commands.add_parser('resume',
-                                        help='Resume working')
-    parser_continue = commands.add_parser('continue',
-                                        help='Resume working, alias of "resume"')
-    parser_closing = commands.add_parser('closing',
-                                        help='End your work day')
-    commands.add_parser('end', help='End your work day')
-    commands.add_parser('stop', help='End your work day')
-    parser_day = commands.add_parser('day',
-                                    help='Print daily statistics')
-    parser_day.add_argument('offset', nargs='?', default=0, type=int,
-                            help='Offset in days to the current one to analyze. '
-                                'Note only negative values make sense here.')
-    parser_week = commands.add_parser('week',
-                                    help='Print weekly statistics')
-    parser_week.add_argument('offset', nargs='?', default=0, type=int,
-                            help='Offset in weeks to the current one to analyze. '
-                                'Note only negative values make sense here.')
-    parser_month = commands.add_parser('month',
-                                    help='Print monthly statistics')
-    parser_month.add_argument('month', nargs='?', default=date.today().month, type=int,
-                            help='Month (1-12), defaults to current')
-    parser_month.add_argument('year', nargs='?', default=date.today().year, type=int,
-                            help='Year (YYYY), defaults to current')
-    parser_month.add_argument('--with-total', dest='with_total', action='store_true',
-                            help='With total-to-date summary')
-    parser_month.add_argument('--with-ytd', dest='with_ytd', action='store_true',
-                            help='With year-to-date summary')
-    parser_month.add_argument('--as-fract-hours', dest='as_hours', action='store_true',
-                            help='Report work time as fractional hours instead of hours:minutes')
+    parser_resume = commands.add_parser("resume", help="Resume working")
+    parser_continue = commands.add_parser(
+        "continue", help='Resume working, alias of "resume"'
+    )
+    parser_closing = commands.add_parser("closing", help="End your work day")
+    commands.add_parser("end", help="End your work day")
+    commands.add_parser("stop", help="End your work day")
+    parser_day = commands.add_parser("day", help="Print daily statistics")
+    parser_day.add_argument(
+        "offset",
+        nargs="?",
+        default=0,
+        type=int,
+        help="Offset in days to the current one to analyze. "
+        "Note only negative values make sense here.",
+    )
+    parser_week = commands.add_parser("week", help="Print weekly statistics")
+    parser_week.add_argument(
+        "offset",
+        nargs="?",
+        default=0,
+        type=int,
+        help="Offset in weeks to the current one to analyze. "
+        "Note only negative values make sense here.",
+    )
+    parser_month = commands.add_parser("month", help="Print monthly statistics")
+    parser_month.add_argument(
+        "month",
+        nargs="?",
+        default=date.today().month,
+        type=int,
+        help="Month (1-12), defaults to current",
+    )
+    parser_month.add_argument(
+        "year",
+        nargs="?",
+        default=date.today().year,
+        type=int,
+        help="Year (YYYY), defaults to current",
+    )
+    parser_month.add_argument(
+        "--with-total",
+        dest="with_total",
+        action="store_true",
+        help="With total-to-date summary",
+    )
+    parser_month.add_argument(
+        "--with-ytd",
+        dest="with_ytd",
+        action="store_true",
+        help="With year-to-date summary",
+    )
+    parser_month.add_argument(
+        "--as-fract-hours",
+        dest="as_hours",
+        action="store_true",
+        help="Report work time as fractional hours instead of hours:minutes",
+    )
 
-    parser_year = commands.add_parser('year',
-                                    help='Print yearly statistics')
-    parser_year.add_argument('year', nargs='?', default=date.today().year, type=int,
-                            help='Year (YYYY), defaults to current')
-    parser_year.add_argument('toMonth', nargs='?', default=date.today().month-1, type=int,
-                            help='Month range end, defaults to '.format(date.today().month-1))
-    parser_year.add_argument('fromMonth', nargs='?', default=1, type=int,
-                            help='Month range start, defaults to 1')
+    parser_year = commands.add_parser("year", help="Print yearly statistics")
+    parser_year.add_argument(
+        "year",
+        nargs="?",
+        default=date.today().year,
+        type=int,
+        help="Year (YYYY), defaults to current",
+    )
+    parser_year.add_argument(
+        "toMonth",
+        nargs="?",
+        default=date.today().month - 1,
+        type=int,
+        help="Month range end, defaults to ".format(date.today().month - 1),
+    )
+    parser_year.add_argument(
+        "fromMonth",
+        nargs="?",
+        default=1,
+        type=int,
+        help="Month range start, defaults to 1",
+    )
 
-    parser_total = commands.add_parser('total',
-                                    help='Print totally statistics')
-    parser_total.add_argument('year', nargs='?', default=date.today().year, type=int,
-                            help='Year (YYYY), defaults to current')
-    parser_total.add_argument('toMonth', nargs='?', default=date.today().month-1, type=int,
-                            help='Month range end, defaults to '.format(date.today().month-1))
+    parser_total = commands.add_parser("total", help="Print totally statistics")
+    parser_total.add_argument(
+        "year",
+        nargs="?",
+        default=date.today().year,
+        type=int,
+        help="Year (YYYY), defaults to current",
+    )
+    parser_total.add_argument(
+        "toMonth",
+        nargs="?",
+        default=date.today().month - 1,
+        type=int,
+        help="Month range end, defaults to ".format(date.today().month - 1),
+    )
 
-    parser_vacation = commands.add_parser('vacation',
-                                    help='Enter vacation dates')
-    parser_vacation.add_argument('start', nargs='?', type=valid_cli_date,
-                            help='Start of vacation')
-    parser_vacation.add_argument('end', nargs='?', type=valid_cli_date,
-                            help='End of vacation')
+    parser_vacation = commands.add_parser("vacation", help="Enter vacation dates")
+    parser_vacation.add_argument(
+        "start", nargs="?", type=valid_cli_date, help="Start of vacation"
+    )
+    parser_vacation.add_argument(
+        "end", nargs="?", type=valid_cli_date, help="End of vacation"
+    )
 
-    parser_fza = commands.add_parser('fza',
-                                    help='Enter fza dates')
-    parser_fza.add_argument('start', nargs='?', type=valid_cli_date,
-                            help='Start of fza')
-    parser_fza.add_argument('end', nargs='?', type=valid_cli_date,
-                            help='End of fza')
+    parser_fza = commands.add_parser("fza", help="Enter fza dates")
+    parser_fza.add_argument(
+        "start", nargs="?", type=valid_cli_date, help="Start of fza"
+    )
+    parser_fza.add_argument("end", nargs="?", type=valid_cli_date, help="End of fza")
 
-    parser_sick = commands.add_parser('sick',
-                                    help='Enter sick dates')
-    parser_sick.add_argument('start', nargs='?', type=valid_cli_date,
-                            help='Start of sick')
-    parser_sick.add_argument('end', nargs='?', type=valid_cli_date,
-                            help='End of sick')
+    parser_sick = commands.add_parser("sick", help="Enter sick dates")
+    parser_sick.add_argument(
+        "start", nargs="?", type=valid_cli_date, help="Start of sick"
+    )
+    parser_sick.add_argument("end", nargs="?", type=valid_cli_date, help="End of sick")
 
     args = parser.parse_args()
 
     actions = {
-        'morning':  (startTracking, []),
-        'start':    (startTracking, []),
-        'break':    (suspendTracking, []),
-        'pause':    (suspendTracking, []),
-        'resume':   (resumeTracking, []),
-        'continue': (resumeTracking, []),
-        'day':      (dayStatistics, ['offset']),
-        'week':     (weekStatistics, ['offset']),
-        'month':     (printMonthStats, ['month', 'year', 'with_total', 'with_ytd', 'as_hours']),
-        'year':     (printYearlyStats, ['year', 'toMonth', 'fromMonth']),
-        'total':     (printTotalStats, ['year', 'toMonth']),
-        'vacation': (addVacation, ['start', 'end']),
-        'fza': (addFza, ['start', 'end']),
-        'sick': (addSick, ['start', 'end']),
-        'closing':  (endTracking, []),
-        'stop':  (endTracking, []),
-        'end':  (endTracking, [])
+        "morning": (startTracking, []),
+        "start": (startTracking, []),
+        "break": (suspendTracking, []),
+        "pause": (suspendTracking, []),
+        "resume": (resumeTracking, []),
+        "continue": (resumeTracking, []),
+        "day": (dayStatistics, ["offset"]),
+        "week": (weekStatistics, ["offset"]),
+        "month": (
+            printMonthStats,
+            ["month", "year", "with_total", "with_ytd", "as_hours"],
+        ),
+        "year": (printYearlyStats, ["year", "toMonth", "fromMonth"]),
+        "total": (printTotalStats, ["year", "toMonth"]),
+        "vacation": (addVacation, ["start", "end"]),
+        "fza": (addFza, ["start", "end"]),
+        "sick": (addSick, ["start", "end"]),
+        "closing": (endTracking, []),
+        "stop": (endTracking, []),
+        "end": (endTracking, []),
     }
 
     if not args.action:
@@ -902,8 +1066,12 @@ def main():
         sys.exit(1)
 
     if args.action not in actions:
-        message('Unsupported action "{}". Use --help to get usage information.'
-                .format(args.action), file=sys.stderr)
+        message(
+            'Unsupported action "{}". Use --help to get usage information.'.format(
+                args.action
+            ),
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     try:
@@ -923,6 +1091,7 @@ def main():
     except KeyboardInterrupt as e:
         print()
         sys.exit(255)
+
 
 if __name__ == "__main__":
     main()
