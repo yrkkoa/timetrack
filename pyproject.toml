@@ -1,0 +1,12 @@
+[project]
+name = "timetrack"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "workalendar",
+]
+
+[tool.uv.sources]
+workalendar = { git = "ssh://git@github.com/sgoth/workalendar" }
