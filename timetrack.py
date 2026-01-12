@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # vim:ts=4:sts=4:sw=4:tw=80:et
 
+import sqlite
+from defines import *
+from randommessage import *
+
 from datetime import datetime, date, time, timedelta
 from dateutil.relativedelta import *
 
@@ -18,13 +22,11 @@ from decimal import Decimal
 
 holiday_calendar = Berlin()
 
-
-from defines import *
-from randommessage import *
-
 cfg = configparser.ConfigParser()
 
 THE_START = date(2021, 7, 12)
+
+sqlite.register_sqlite_adapters()
 
 # monthly reporting as decimal hours we round as expected
 decimal.getcontext().rounding = decimal.ROUND_HALF_UP
