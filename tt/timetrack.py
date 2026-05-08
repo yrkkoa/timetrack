@@ -894,17 +894,16 @@ def validateConfig(config):
 
 
 def main():
-    try:
-        cfgfile = os.path.expanduser(CONFIG_FILE)
-        cfg.read(cfgfile)
-    except:
+    cfgfile = os.path.expanduser(CONFIG_FILE)
+
+    if not os.path.exists(cfgfile):
         print(
-            "Please create a "
-            + CONFIG_FILE
-            + " with entry: \n[db]\nfile = /path/to/database.db"
+            f"Please create {CONFIG_FILE} with:\n"
+            "[db]\nfile = /path/to/database.db"
         )
         sys.exit(1)
 
+    cfg.read(cfgfile)
     validateConfig(cfg)
 
     parser = argparse.ArgumentParser(description="Track your work time")
