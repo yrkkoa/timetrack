@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # vim:ts=4:sts=4:sw=4:tw=80:et
 
-import sqlite
-from defines import *
-from randommessage import *
-
 from datetime import datetime, date, time, timedelta
+
+from . import sqlite
+from .defines import *
+from . import randommessage
 
 import argparse
 import os

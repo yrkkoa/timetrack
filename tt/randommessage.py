@@ -1,4 +1,4 @@
-from defines import *
+from . import defines
 from datetime import datetime
 import random
 

@@ -1,7 +1,7 @@
 [project]
 name = "timetrack"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Easy timetracking in Berlin from command line"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -10,3 +10,13 @@ dependencies = [
 
 [tool.uv.sources]
 workalendar = { git = "ssh://git@github.com/sgoth/workalendar" }
+
+[tool.setuptools]
+py-modules = ["timetrack"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tt*"]
+
+[project.scripts]
+tt = "tt.timetrack:main"
