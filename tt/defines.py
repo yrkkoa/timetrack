@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 ACT_ARRIVE = "arrive"
 ACT_BREAK = "break"
 ACT_RESUME = "resume"
@@ -16,7 +18,8 @@ MSG_SUCCESS_RESUME = 1 << 5
 MSG_SUCCESS_LEAVE = 1 << 6
 
 
-WEEK_HOURS = 35
+WEEK_HOURS = 40
 DAY_HOURS = WEEK_HOURS / 5.0
+LUNCH_BREAK = timedelta(minutes=30)
 
 CONFIG_FILE = "~/.config/timetrack.conf"

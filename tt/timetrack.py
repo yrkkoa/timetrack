@@ -5,7 +5,7 @@ from datetime import datetime, date, time, timedelta
 
 from . import sqlite
 from .defines import *
-from . import randommessage
+from .randommessage import randomMessage
 
 import argparse
 import os
@@ -37,6 +37,15 @@ def valid_cli_date(s):
     except ValueError:
         msg = "not a valid date: {0!r}".format(s)
         raise argparse.ArgumentTypeError(msg)
+
+
+def valid_cli_time(s):
+    for fmt in ("%H:%M", "%H%M"):
+        try:
+            return datetime.strptime(s, fmt).time()
+        except ValueError:
+            continue
+    raise argparse.ArgumentTypeError("not a valid time: {0!r}".format(s))
 
 
 class ProgramAbortError(Exception):
@@ -156,7 +165,7 @@ def revertLeave(con, date):
     )
 
 
-def startTracking(con):
+def startTracking(con, ts=None):
     """
     Start your day: Records your arrival time in the morning.
     """
@@ -176,9 +185,9 @@ def startTracking(con):
             revertLeave(con, date.today())
             isResume = True
         else:
-            raise ProgramAbortError("Aborted by user")
+            raise ProgramAbortError("Aborted by user", None)
 
-    arrivalTime = datetime.now()
+    arrivalTime = datetime.combine(date.today(), ts) if ts else datetime.now()
     addEntry(con, ACT_RESUME if isResume else ACT_ARRIVE, arrivalTime)
     message(randomMessage(MSG_SUCCESS_ARRIVAL, arrivalTime))
 
@@ -202,7 +211,7 @@ def suspendTracking(con):
     dayStatistics(con)
 
 
-def resumeTracking(con):
+def resumeTracking(con, ts=None):
     """
     Resume tracking after a break. Records the end time of your break. There
     can be an infinite number of breaks per day.
@@ -215,7 +224,7 @@ def resumeTracking(con):
     if lastType != ACT_BREAK:
         error(randomMessage(MSG_ERR_NOT_BREAKING, lastType), None)
 
-    resumeTime = datetime.now()
+    resumeTime = datetime.combine(date.today(), ts) if ts else datetime.now()
     addEntry(con, ACT_RESUME, resumeTime)
     message(randomMessage(MSG_SUCCESS_RESUME, resumeTime, lastTime))
     dayStatistics(con)
@@ -266,6 +275,188 @@ def addFza(con, start, end):
 
 def addSick(con, start, end):
     addSpecialEntries(con, ACT_SICK, start, end)
+
+
+def logWorkday(con, day, start, end):
+    """
+    Back-fill a regular workday: records arrive + leave for the given date with
+    an automatic 30-minute lunch break centered in the middle of the workday.
+    """
+    arrive_ts = datetime.combine(day.date(), start)
+    leave_ts = datetime.combine(day.date(), end)
+
+    if leave_ts <= arrive_ts:
+        error("End time must be after start time", None)
+    if leave_ts - arrive_ts <= LUNCH_BREAK:
+        error("Workday too short to fit a 30-minute lunch break", None)
+
+    cur = con.execute(
+        "SELECT COUNT(*) AS n FROM times WHERE ts >= ? AND ts < ?",
+        (
+            datetime.combine(day.date(), time()),
+            datetime.combine(day.date() + timedelta(days=1), time()),
+        ),
+    )
+    if cur.fetchone()["n"] > 0:
+        error("Entries already exist for {}".format(day.date()), None)
+
+    midpoint = arrive_ts + (leave_ts - arrive_ts) / 2
+    break_start = midpoint - LUNCH_BREAK / 2
+    break_end = break_start + LUNCH_BREAK
+
+    addEntry(con, ACT_ARRIVE, arrive_ts)
+    addEntry(con, ACT_BREAK, break_start)
+    addEntry(con, ACT_RESUME, break_end)
+    addEntry(con, ACT_LEAVE, leave_ts)
+
+    worked = (leave_ts - arrive_ts) - LUNCH_BREAK
+    h, m = timeAsHourMinute(worked)
+    message(
+        "Logged {}: {:%H:%M}–{:%H:%M} (lunch {:%H:%M}–{:%H:%M}), "
+        "net {}h{:02d}m".format(
+            day.date(), arrive_ts, leave_ts, break_start, break_end, h, m
+        )
+    )
+
+
+def addLunch(con, lunch_args):
+    """
+    Insert a break into an existing workday. Records a (break, resume) pair.
+    Accepts: [YYYY-MM-DD] HH:MM [HH:MM]
+      - 1 arg:  start time, day=today, end=start+30min
+      - 2 args: date + start, end=start+30min  OR  start + end, day=today
+      - 3 args: date + start + end
+    """
+    day = None
+    start = None
+    end = None
+
+    for arg in lunch_args:
+        try:
+            parsed = valid_cli_date(arg)
+            day = parsed
+            continue
+        except argparse.ArgumentTypeError:
+            pass
+        try:
+            parsed = valid_cli_time(arg)
+            if start is None:
+                start = parsed
+            else:
+                end = parsed
+            continue
+        except argparse.ArgumentTypeError:
+            pass
+        error("Unrecognised argument '{}' — expected YYYY-MM-DD or HH:MM".format(arg), None)
+
+    if start is None:
+        error("Break start time is required (e.g. tt lunch 12:00)", None)
+    if day is None:
+        day = datetime.today()
+    if end is None:
+        end = (datetime.combine(day.date(), start) + LUNCH_BREAK).time()
+
+    break_start = datetime.combine(day.date(), start)
+    break_end = datetime.combine(day.date(), end)
+
+    if break_end <= break_start:
+        error("End time must be after start time", None)
+
+    day_start = datetime.combine(day.date(), time())
+    day_end = datetime.combine(day.date() + timedelta(days=1), time())
+
+    cur = con.execute(
+        "SELECT type, ts FROM times WHERE ts >= ? AND ts < ? ORDER BY ts",
+        (day_start, day_end),
+    )
+    rows = cur.fetchall()
+
+    arrive_ts = next((r["ts"] for r in rows if r["type"] == ACT_ARRIVE), None)
+    if arrive_ts is None:
+        error(
+            "No arrive entry on {} — nothing to insert a break into".format(day.date()),
+            None,
+        )
+
+    leave_ts = next((r["ts"] for r in rows if r["type"] == ACT_LEAVE), None)
+    upper_bound = leave_ts if leave_ts is not None else day_end
+
+    if break_start <= arrive_ts:
+        error("Break must start after arrive ({:%H:%M})".format(arrive_ts), None)
+    if break_end >= upper_bound:
+        label = "leave" if leave_ts is not None else "end of day"
+        error("Break must end before {} ({:%H:%M})".format(label, upper_bound), None)
+
+    for r in rows:
+        if r["type"] not in (ACT_BREAK, ACT_RESUME):
+            continue
+        if break_start <= r["ts"] <= break_end:
+            error(
+                "Break overlaps existing {} at {:%H:%M}".format(r["type"], r["ts"]),
+                None,
+            )
+
+    pairs = []
+    pending = None
+    for r in rows:
+        if r["type"] == ACT_BREAK:
+            pending = r["ts"]
+        elif r["type"] == ACT_RESUME and pending is not None:
+            pairs.append((pending, r["ts"]))
+            pending = None
+    for p_start, p_end in pairs:
+        if break_start < p_end and break_end > p_start:
+            error(
+                "Break overlaps existing break {:%H:%M}–{:%H:%M}".format(
+                    p_start, p_end
+                ),
+                None,
+            )
+
+    addEntry(con, ACT_BREAK, break_start)
+    addEntry(con, ACT_RESUME, break_end)
+
+    duration = break_end - break_start
+    h, m = timeAsHourMinute(duration)
+    if h:
+        dur_str = "{}h{:02d}m".format(h, m)
+    else:
+        dur_str = "{}m".format(m)
+    message(
+        "Added break on {}: {:%H:%M}–{:%H:%M} ({})".format(
+            day.date(), break_start, break_end, dur_str
+        )
+    )
+
+
+def deleteDay(con, day):
+    """
+    Delete all entries on the given date after showing them and asking for
+    confirmation. Refuses if the day has no entries.
+    """
+    day_start = datetime.combine(day.date(), time())
+    day_end = datetime.combine(day.date() + timedelta(days=1), time())
+
+    rows = list(
+        con.execute(
+            "SELECT type, ts FROM times WHERE ts >= ? AND ts < ? ORDER BY ts",
+            (day_start, day_end),
+        )
+    )
+    if not rows:
+        error("No entries on {}".format(day.date()), None)
+
+    print("Entries on {}:".format(day.date()))
+    for r in rows:
+        print("  {:<7} {:%H:%M:%S}".format(r["type"], r["ts"]))
+
+    should = input("Delete all {} entries? [y/N] ".format(len(rows)))
+    if should != "y":
+        raise ProgramAbortError("Aborted by user", None)
+
+    con.execute("DELETE FROM times WHERE ts >= ? AND ts < ?", (day_start, day_end))
+    con.commit()
+    message("Deleted {} entries on {}".format(len(rows), day.date()))
 
 
 def getEntries(con, d):
@@ -451,9 +642,6 @@ class WorkYear:
         self.months = []
         self.year = year
 
-    def year(self):
-        return self.year
-
     def addMonth(self, month):
         self.months.append(month)
 
@@ -523,7 +711,7 @@ def getWorkTimeForDay(con, d=date.today()):
             day.pauses.append(pause)
             pause = None
         else:
-            error("Unhandled type for {}".format(type, ts), None)
+            error("Unhandled type for {} at {}".format(type, ts), None)
 
     if day.start and not day.end:
         day.end = datetime.now()
@@ -567,7 +755,7 @@ def dayStatistics(con, offset=0):
     targetDay = date.today() + timedelta(days=offset)
     for type, ts in getEntries(con, targetDay):
         if not headerPrinted:
-            message("Time tracking entries for {:%d.%m.%Y}:".format(targetDay))
+            message("Time tracking entries for {}:".format(targetDay.strftime("%d.%m.%Y")))
             headerPrinted = True
         message("  {:<10} {:%d.%m.%Y %H:%M}".format(type, ts))
 
@@ -632,13 +820,36 @@ def printMonthStats(con, month, year, with_total=False, with_ytd=False, as_hours
     print("Work time for {}:\n".format(m.date.strftime("%B '%y")))
     print("     Day         Hours   Pauses / Comment")
 
+    prev_iso_week = None
+    week_worked = timedelta(0)
+    week_expected = timedelta(0)
+    week_days = 0
+
+    def print_week_summary():
+        worked_h = week_worked.total_seconds() / 3600
+        expected_h = week_expected.total_seconds() / 3600
+        print(
+            "  Week total: {:>6.2f} / {:>6.2f} h  ({} working day{})".format(
+                worked_h, expected_h, week_days, "" if week_days == 1 else "s"
+            )
+        )
+
     # loop all days to also show weekends/holidays
     for workday in m.workdays:
         today = workday.day()
+        iso_week = today.isocalendar()[1]
+
+        if prev_iso_week is not None and iso_week != prev_iso_week:
+            print_week_summary()
+            week_worked = timedelta(0)
+            week_expected = timedelta(0)
+            week_days = 0
 
         # visually group weeks
-        if today.weekday() == 0 or today.weekday() == 5:
+        if today.weekday() == 0:
             print("-" * 40)
+        elif today.weekday() == 5:
+            print("." * 40)
 
         if workday is not None and today == workday.day():
             comment = ""
@@ -660,10 +871,27 @@ def printMonthStats(con, month, year, with_total=False, with_ytd=False, as_hours
 
             print("{} {}".format(workday.to_string(as_hours=as_hours), comment))
 
+        week_worked += workday.worktime()
+        if holiday_calendar.is_working_day(today):
+            week_expected += timedelta(hours=DAY_HOURS)
+            week_days += 1
+        prev_iso_week = iso_week
+
+    if prev_iso_week is not None:
+        print_week_summary()
+
     expectedHours, expectedMinutes = timeAsHourMinute(m.expectedTime)
     actualHours, actualMinutes = timeAsHourMinute(m.actualTime)
 
+    actualDecimal = m.actualTime.total_seconds() / 3600
+    expectedDecimal = m.expectedTime.total_seconds() / 3600
+
     print("-" * 40)
+    print(
+        "Hours worked/expected:  {:>6.2f} / {:>6.2f} h  ({} working days)".format(
+            actualDecimal, expectedDecimal, m.expectedWorkdays
+        )
+    )
     print(
         "Working hours expected: {:>3d} h {:02d} min".format(
             expectedHours, expectedMinutes
@@ -898,8 +1126,7 @@ def main():
 
     if not os.path.exists(cfgfile):
         print(
-            f"Please create {CONFIG_FILE} with:\n"
-            "[db]\nfile = /path/to/database.db"
+            f"Please create {CONFIG_FILE} with:\n" "[db]\nfile = /path/to/database.db"
         )
         sys.exit(1)
 
@@ -912,14 +1139,26 @@ def main():
         title="subcommands", dest="action", help="description", metavar="action"
     )
     parser_morning = commands.add_parser("morning", help="Start a new day")
-    commands.add_parser("start", help="Start a new day")
+    parser_morning.add_argument(
+        "ts", nargs="?", type=valid_cli_time, help="Arrival time (HH:MM), defaults to now"
+    )
+    parser_start = commands.add_parser("start", help="Start a new day")
+    parser_start.add_argument(
+        "ts", nargs="?", type=valid_cli_time, help="Arrival time (HH:MM), defaults to now"
+    )
 
     parser_break = commands.add_parser("break", help="Take a break from working")
     commands.add_parser("pause", help="Alias to break")
 
     parser_resume = commands.add_parser("resume", help="Resume working")
+    parser_resume.add_argument(
+        "ts", nargs="?", type=valid_cli_time, help="Resume time (HH:MM), defaults to now"
+    )
     parser_continue = commands.add_parser(
         "continue", help='Resume working, alias of "resume"'
+    )
+    parser_continue.add_argument(
+        "ts", nargs="?", type=valid_cli_time, help="Resume time (HH:MM), defaults to now"
     )
     parser_closing = commands.add_parser("closing", help="End your work day")
     commands.add_parser("end", help="End your work day")
@@ -1035,15 +1274,40 @@ def main():
     )
     parser_sick.add_argument("end", nargs="?", type=valid_cli_date, help="End of sick")
 
+    parser_log = commands.add_parser(
+        "log",
+        help="Back-fill a workday with start/end times (30 min lunch auto-subtracted)",
+    )
+    parser_log.add_argument(
+        "day", type=valid_cli_date, help="Date of the workday (YYYY-MM-DD)"
+    )
+    parser_log.add_argument("start", type=valid_cli_time, help="Start time (HH:MM)")
+    parser_log.add_argument("end", type=valid_cli_time, help="End time (HH:MM)")
+
+    parser_lunch = commands.add_parser(
+        "lunch", help="Insert a break into an existing workday"
+    )
+    parser_lunch.add_argument(
+        "lunch_args", nargs="*", metavar="arg",
+        help="[YYYY-MM-DD] HH:MM [HH:MM] — date defaults to today, end defaults to start+30min"
+    )
+
+    parser_delete = commands.add_parser(
+        "delete", help="Delete all entries on a given date (with confirmation)"
+    )
+    parser_delete.add_argument(
+        "day", type=valid_cli_date, help="Date to wipe (YYYY-MM-DD)"
+    )
+
     args = parser.parse_args()
 
     actions = {
-        "morning": (startTracking, []),
-        "start": (startTracking, []),
+        "morning": (startTracking, ["ts"]),
+        "start": (startTracking, ["ts"]),
         "break": (suspendTracking, []),
         "pause": (suspendTracking, []),
-        "resume": (resumeTracking, []),
-        "continue": (resumeTracking, []),
+        "resume": (resumeTracking, ["ts"]),
+        "continue": (resumeTracking, ["ts"]),
         "day": (dayStatistics, ["offset"]),
         "week": (weekStatistics, ["offset"]),
         "month": (
@@ -1053,6 +1317,9 @@ def main():
         "year": (printYearlyStats, ["year", "toMonth", "fromMonth"]),
         "total": (printTotalStats, ["year", "toMonth"]),
         "vacation": (addVacation, ["start", "end"]),
+        "log": (logWorkday, ["day", "start", "end"]),
+        "lunch": (addLunch, ["lunch_args"]),
+        "delete": (deleteDay, ["day"]),
         "fza": (addFza, ["start", "end"]),
         "sick": (addSick, ["start", "end"]),
         "closing": (endTracking, []),
@@ -1065,7 +1332,7 @@ def main():
         sys.exit(1)
 
     if args.action not in actions:
-        message(
+        print(
             'Unsupported action "{}". Use --help to get usage information.'.format(
                 args.action
             ),
